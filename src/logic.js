@@ -27,7 +27,7 @@ export function allSectionsFlat(customSections) {
       sec,
       chapterKey: c.key,
       chapterLabel: c.label,
-    }))
+    })),
   );
 }
 
@@ -49,14 +49,14 @@ export function ownSectionItems(sec, customItems) {
 export function sectionItems(sec, customItems, customSections) {
   const own = ownSectionItems(sec, customItems);
   const linkedFrom = allSectionsFlat(customSections).filter(
-    (x) => x.sec.linkedSectionId === sec.id
+    (x) => x.sec.linkedSectionId === sec.id,
   );
   const linkedItems = linkedFrom.flatMap((x) =>
     ownSectionItems(x.sec, customItems).map((it) => ({
       ...it,
       __linkedFromName: x.sec.nm,
       __ownerSectionId: x.sec.id,
-    }))
+    })),
   );
   return own.concat(linkedItems);
 }
@@ -96,19 +96,28 @@ export function findItemById(id, customItems, customSections) {
 
 export function findItemOrigin(id, customItems, customSections) {
   for (const x of allSectionsFlat(customSections)) {
-    const found = ownSectionItems(x.sec, customItems).find((it) => it.id === id);
+    const found = ownSectionItems(x.sec, customItems).find(
+      (it) => it.id === id,
+    );
     if (found) return { chapterLabel: x.chapterLabel, sectionName: x.sec.nm };
   }
   return null;
 }
 
-// A section allows the "à acheter" (buy) ticket if it's one of the two
-// built-in bagage sections, or a custom section explicitly flagged as
-// containing prices when it was created.
+// A section allows the "à acheter" (buy) ticket if it is a built-in
+// Bagages/Acheter section, or a custom section explicitly flagged with
+// hasPrices when it was created.
 export function sectionHasPrices(sectionId, customSections) {
-  if (sectionId === "valise-emporter" || sectionId === "valise-acheter") return true;
-  const found = allSectionsFlat(customSections).find((x) => x.sec.id === sectionId);
-  return !!(found && found.sec.hasPrices);
+  const found = allSectionsFlat(customSections).find(
+    (x) => x.sec.id === sectionId,
+  );
+  if (!found) return false;
+  if (found.sec.hasPrices) return true;
+  const isCustom = String(found.sec.id).startsWith("custom-sec-");
+  return (
+    !isCustom &&
+    (found.chapterKey === "bagages" || found.chapterKey === "acheter")
+  );
 }
 
 export function effectiveIsBuy(it, buyOverrides) {
@@ -133,11 +142,15 @@ export function effectiveEst(it, buyOverrides) {
 export function acheterRows(budget, state, customItems, customSections) {
   return budget.items.map((b) => {
     const linkedId = b.id.startsWith("b-") ? b.id.slice(2) : null;
-    const linkedItem = linkedId ? findItemById(linkedId, customItems, customSections) : null;
+    const linkedItem = linkedId
+      ? findItemById(linkedId, customItems, customSections)
+      : null;
     const bought = linkedItem ? !!state[linkedId] : !!b.bought;
     const name = linkedItem ? linkedItem.t : b.name;
     const desc = linkedItem ? linkedItem.d : "";
-    const origin = linkedId ? findItemOrigin(linkedId, customItems, customSections) : null;
+    const origin = linkedId
+      ? findItemOrigin(linkedId, customItems, customSections)
+      : null;
     return { b, linkedId, linkedItem, bought, name, desc, origin };
   });
 }

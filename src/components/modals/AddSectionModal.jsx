@@ -15,7 +15,7 @@ export default function AddSectionModal({ open, activeChapter, customSections, o
     setChapterKey(activeChapter);
     setName("");
     setIcon("📌");
-    setHasPrices(false);
+    setHasPrices(activeChapter === "bagages" || activeChapter === "acheter");
     setLinkedSectionId("");
     setTimeout(() => inputRef.current?.focus(), 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
