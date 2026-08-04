@@ -23,7 +23,7 @@ binding = "ASSETS"
 # every visitor, which is what makes changes show up on every device.
 [[kv_namespaces]]
 binding = "STATE_KV"
-id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+id = "f234934e04054747a545eea28b6adc42"
 
 # ---------------------------------------------------------------------------
 # Deploying through Cloudflare PAGES instead (Git integration, or
