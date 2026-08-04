@@ -1,22 +1,35 @@
+# Config for a plain Worker deployment (wrangler deploy), which is what
+# produces a *.workers.dev URL like checklist.<account>.workers.dev.
+#
+# One-time setup:
+#   1. Build the app:                npm run build
+#   2. Create the KV namespace:      wrangler kv namespace create STATE_KV
+#   3. Paste the id it prints below, replacing REPLACE_WITH_YOUR_KV_NAMESPACE_ID
+#   4. Deploy:                       wrangler deploy
+#
+# Redeploy any time by re-running steps 1 and 4.
 
-# Bind a KV namespace named STATE_KV so /functions/api/state.js can read
-# and write the shared app state. Create the namespace once with:
-#
-#   wrangler kv namespace create STATE_KV
-#
-# then paste the id it prints below (and again under [env.production] if
-# you deploy through `wrangler pages deploy` rather than the dashboard).
-# If you deploy via the Cloudflare dashboard instead, add the same binding
-# under Settings → Functions → KV namespace bindings — this file is only
-# read by the `wrangler` CLI.
 name = "checklist"
-compatibility_date = "2026-08-04"
+main = "worker/index.js"
+compatibility_date = "2024-09-01"
 
+# Serves the built React app (dist/) for any request that isn't /api/state.
+# worker/index.js does `env.ASSETS.fetch(request)` for that fallback.
 [assets]
 directory = "./dist"
-pages_build_output_dir = "dist"
-not_found_handling = "single-page-application"
+binding = "ASSETS"
 
+# Shared checklist state (see worker/index.js) — same KV namespace used by
+# every visitor, which is what makes changes show up on every device.
 [[kv_namespaces]]
 binding = "STATE_KV"
-id = "f234934e04054747a545eea28b6adc42"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+
+# ---------------------------------------------------------------------------
+# Deploying through Cloudflare PAGES instead (Git integration, or
+# `wrangler pages deploy`) uses a different mechanism entirely — Pages
+# doesn't read this file. It auto-detects functions/api/state.js and you'd
+# instead bind STATE_KV under Settings → Functions → KV namespace bindings
+# in the dashboard. Pick ONE deployment method (Worker or Pages) — the file
+# for the other one you're not using is simply unused, not a conflict.
+# ---------------------------------------------------------------------------
