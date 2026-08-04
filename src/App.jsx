@@ -9,12 +9,9 @@ import {
   findItemById,
 } from "./logic.js";
 import {
-  loadState,
-  loadCustomItems,
-  loadBudget,
-  loadBuyOverrides,
-  loadCustomSections,
-  saveAll,
+  loadCachedLocal,
+  fetchRemoteState,
+  saveRemoteState,
 } from "./storage.js";
 
 import Ticket from "./components/Ticket.jsx";
@@ -28,20 +25,26 @@ import AddItemModal from "./components/modals/AddItemModal.jsx";
 import AddSectionModal from "./components/modals/AddSectionModal.jsx";
 
 const CHAPTER_KEYS = CHAPTERS_META.map((c) => c.key);
+const POLL_INTERVAL_MS = 6000;
+// Don't let an incoming poll overwrite what we just typed/clicked locally —
+// only apply remote changes once it's been a moment since our own last edit.
+const QUIET_PERIOD_MS = 3000;
 
 export default function App() {
-  // ----- core persisted state -----
-  const [state, setState] = useState(() => loadState());
-  const [customItems, setCustomItems] = useState(() => loadCustomItems());
-  const [budget, setBudget] = useState(() => loadBudget());
-  const [buyOverrides, setBuyOverrides] = useState(() => loadBuyOverrides());
-  const [customSections, setCustomSections] = useState(() => loadCustomSections(CHAPTER_KEYS));
+  const initialCache = useState(() => loadCachedLocal(CHAPTER_KEYS))[0];
+
+  // ----- core, shared-across-devices state -----
+  const [state, setState] = useState(initialCache.state);
+  const [customItems, setCustomItems] = useState(initialCache.customItems);
+  const [budget, setBudget] = useState(initialCache.budget);
+  const [buyOverrides, setBuyOverrides] = useState(initialCache.buyOverrides);
+  const [customSections, setCustomSections] = useState(initialCache.customSections);
 
   // ----- UI-only state -----
   const [activeChapter, setActiveChapter] = useState("depart");
   const [openSections, setOpenSections] = useState({});
   const [openDetails, setOpenDetails] = useState({});
-  const [syncNote, setSyncNote] = useState("enregistré dans ce navigateur");
+  const [syncNote, setSyncNote] = useState("chargement…");
   const [resetArmed, setResetArmed] = useState(false);
   const resetTimerRef = useRef(null);
 
@@ -58,15 +61,82 @@ export default function App() {
   const [addItemModalOpen, setAddItemModalOpen] = useState(false);
   const [addSectionModalOpen, setAddSectionModalOpen] = useState(false);
 
-  // ----- persistence: debounce-save whenever core state changes -----
+  // ----- initial load from the shared API (falls back silently to the
+  // local cache already in state if offline / API not deployed yet) -----
+  const hasLoadedRemoteRef = useRef(false);
+  const lastLocalEditRef = useRef(0);
+  const applyingRemoteRef = useRef(false);
+
+  function applyRemote(remote) {
+    applyingRemoteRef.current = true;
+    setState(remote.state);
+    setCustomItems(remote.customItems);
+    setBudget(remote.budget);
+    setBuyOverrides(remote.buyOverrides);
+    setCustomSections(remote.customSections);
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const remote = await fetchRemoteState(CHAPTER_KEYS);
+      if (cancelled) return;
+      if (remote) applyRemote(remote);
+      hasLoadedRemoteRef.current = true;
+      setSyncNote(remote ? "synchronisé" : "prêt (rien de synchronisé pour l'instant)");
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ----- poll for changes made from other devices/tabs, and refetch
+  // whenever this tab becomes visible again -----
+  useEffect(() => {
+    async function poll() {
+      if (!hasLoadedRemoteRef.current) return;
+      if (Date.now() - lastLocalEditRef.current < QUIET_PERIOD_MS) return;
+      const remote = await fetchRemoteState(CHAPTER_KEYS);
+      if (!remote) return;
+      const current = JSON.stringify({ state, customItems, budget, buyOverrides, customSections });
+      if (JSON.stringify(remote) !== current) {
+        applyRemote(remote);
+        setSyncNote("mis à jour depuis un autre appareil");
+      }
+    }
+    const interval = setInterval(poll, POLL_INTERVAL_MS);
+    function onVisible() {
+      if (document.visibilityState === "visible") poll();
+    }
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state, customItems, budget, buyOverrides, customSections]);
+
+  // ----- persistence: debounce-save whenever core state changes, push to
+  // the shared API so every device picks it up -----
   const saveTimerRef = useRef(null);
   useEffect(() => {
+    if (!hasLoadedRemoteRef.current) return; // don't save before initial load resolves
+    if (applyingRemoteRef.current) {
+      // this change came FROM the server (poll/initial load) — no need to
+      // immediately write it straight back
+      applyingRemoteRef.current = false;
+      return;
+    }
+    lastLocalEditRef.current = Date.now();
     setSyncNote("enregistrement…");
     clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => {
-      const ok = saveAll({ state, customItems, budget, buyOverrides, customSections });
-      setSyncNote(ok ? "enregistré dans ce navigateur" : "non enregistré");
-    }, 200);
+    saveTimerRef.current = setTimeout(async () => {
+      const ok = await saveRemoteState({ state, customItems, budget, buyOverrides, customSections });
+      setSyncNote(ok ? "synchronisé sur tous tes appareils" : "enregistré localement (hors ligne)");
+    }, 400);
     return () => clearTimeout(saveTimerRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, customItems, budget, buyOverrides, customSections]);

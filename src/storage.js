@@ -70,3 +70,94 @@ export function saveAll({ state, customItems, budget, buyOverrides, customSectio
     return false;
   }
 }
+
+
+
+// Shared persistence: the app's state now lives in a Cloudflare KV
+// namespace behind a small Pages Function (see /functions/api/state.js),
+// so every device/browser that opens the app sees the same data — not a
+// separate copy per browser.
+//
+// localStorage is still used, but only as an instant local cache: it lets
+// the UI paint immediately on load (no blank screen while the network
+// request is in flight) and keeps working if the network/API is briefly
+// unavailable. The Cloudflare KV copy is the source of truth; whenever a
+// fresh copy is fetched from the API, it overwrites the local cache.
+
+const API_URL = "/api/state";
+const LOCAL_CACHE_KEY = "dossier-app-state-cache-v1";
+
+export function defaultAppState(chapterKeys) {
+  const customSections = {};
+  chapterKeys.forEach((k) => {
+    customSections[k] = [];
+  });
+  return {
+    state: {},
+    customItems: {},
+    budget: { target: 0, items: [] },
+    buyOverrides: {},
+    customSections,
+  };
+}
+
+// Synchronous — used as the initial React state so the UI has something to
+// render instantly, before the network round-trip to the API resolves.
+export function loadCachedLocal(chapterKeys) {
+  try {
+    const raw = localStorage.getItem(LOCAL_CACHE_KEY);
+    if (!raw) return defaultAppState(chapterKeys);
+    const parsed = JSON.parse(raw);
+    if (!parsed.customSections) parsed.customSections = {};
+    chapterKeys.forEach((k) => {
+      if (!parsed.customSections[k]) parsed.customSections[k] = [];
+    });
+    return parsed;
+  } catch {
+    return defaultAppState(chapterKeys);
+  }
+}
+
+function cacheLocal(data) {
+  try {
+    localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(data));
+  } catch {
+    // ignore quota/availability errors — the API copy is still safe
+  }
+}
+
+// Fetch the shared state from the API. Returns null on any failure (offline,
+// API not deployed yet, etc.) so callers can fall back to the local cache.
+export async function fetchRemoteState(chapterKeys) {
+  try {
+    const res = await fetch(API_URL, { cache: "no-store" });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data) return null;
+    if (!data.customSections) data.customSections = {};
+    chapterKeys.forEach((k) => {
+      if (!data.customSections[k]) data.customSections[k] = [];
+    });
+    cacheLocal(data);
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+// Push the full state to the API so every other device picks it up. Always
+// updates the local cache immediately (works offline); the network push is
+// best-effort — if it fails, the next successful poll/save will retry.
+export async function saveRemoteState(data) {
+  cacheLocal(data);
+  try {
+    const res = await fetch(API_URL, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}

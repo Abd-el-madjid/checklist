@@ -1,0 +1,17 @@
+name = "besancon-checklist"
+compatibility_date = "2024-09-01"
+pages_build_output_dir = "dist"
+
+# Bind a KV namespace named STATE_KV so /functions/api/state.js can read
+# and write the shared app state. Create the namespace once with:
+#
+#   wrangler kv namespace create STATE_KV
+#
+# then paste the id it prints below (and again under [env.production] if
+# you deploy through `wrangler pages deploy` rather than the dashboard).
+# If you deploy via the Cloudflare dashboard instead, add the same binding
+# under Settings → Functions → KV namespace bindings — this file is only
+# read by the `wrangler` CLI.
+[[kv_namespaces]]
+binding = "STATE_KV"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
