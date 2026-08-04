@@ -1,7 +1,3 @@
-# wrangler.toml
-name = 'checklist'
-compatibility_date = "2024-09-01"
-pages_build_output_dir = "dist"
 
 # Bind a KV namespace named STATE_KV so /functions/api/state.js can read
 # and write the shared app state. Create the namespace once with:
@@ -13,6 +9,13 @@ pages_build_output_dir = "dist"
 # If you deploy via the Cloudflare dashboard instead, add the same binding
 # under Settings → Functions → KV namespace bindings — this file is only
 # read by the `wrangler` CLI.
+name = "checklist"
+compatibility_date = "2026-08-04"
+
+[assets]
+directory = "./dist"
+not_found_handling = "single-page-application"
+
 [[kv_namespaces]]
 binding = "STATE_KV"
 id = "f234934e04054747a545eea28b6adc42"
