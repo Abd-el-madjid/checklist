@@ -14,4 +14,4 @@ pages_build_output_dir = "dist"
 # read by the `wrangler` CLI.
 [[kv_namespaces]]
 binding = "STATE_KV"
-id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+id = "f234934e04054747a545eea28b6adc42"
