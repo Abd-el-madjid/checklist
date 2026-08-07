@@ -6,6 +6,7 @@ export default function AddItemModal({
   activeChapter,
   openSections,
   customSections,
+  customItems,
   onConfirm,
   onCancel,
 }) {
@@ -14,13 +15,14 @@ export default function AddItemModal({
   const [tag, setTag] = useState("req");
   const [mustBuy, setMustBuy] = useState(false);
   const [price, setPrice] = useState("");
+  const [quantity, setQuantity] = useState(1);
   const [comment, setComment] = useState("");
   const inputRef = useRef(null);
 
   const sections =
     activeChapter === "acheter" ? chapterSections("bagages", customSections) : chapterSections(activeChapter, customSections);
   const isAcheterChapter = activeChapter === "acheter";
-  const sectionAllowsBuy = isAcheterChapter || sectionHasPrices(sectionId, customSections);
+  const sectionAllowsBuy = isAcheterChapter || sectionHasPrices(sectionId, customItems, customSections);
 
   useEffect(() => {
     if (!open) return;
@@ -31,6 +33,7 @@ export default function AddItemModal({
     setTag("req");
     setMustBuy(isAcheterChapter);
     setPrice("");
+    setQuantity(1);
     setComment("");
     setTimeout(() => inputRef.current?.focus(), 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -43,7 +46,15 @@ export default function AddItemModal({
       inputRef.current?.focus();
       return;
     }
-    onConfirm({ sectionId, text, mustBuy: isAcheterChapter ? true : mustBuy, price, tag, comment });
+    onConfirm({
+      sectionId,
+      text,
+      mustBuy: isAcheterChapter ? true : mustBuy,
+      price,
+      quantity,
+      tag,
+      comment,
+    });
   };
 
   return (
@@ -121,6 +132,18 @@ export default function AddItemModal({
               value={price}
               onChange={(e) => setPrice(e.target.value)}
             />
+            <input
+              type="number"
+              className="modal-input"
+              min="1"
+              step="1"
+              placeholder="Quantité"
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+            />
+            <span className="modal-hint">
+              Total : {(Number(price) || 0) * (Number(quantity) || 1)} €
+            </span>
           </div>
         ) : null}
 

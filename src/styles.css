@@ -85,6 +85,10 @@
 
   .item{display:flex;gap:.6rem;padding:.55rem 0;border-top:1px solid var(--line);}
   .item:first-child{border-top:none;}
+  .item.item-child{padding-left:1.35rem;border-left:3px solid var(--line);margin-top:.15rem;}
+  .item.item-child .item-body{padding-left:.15rem;}
+  .child-summary{margin:.15rem 0 .35rem 2.6rem;font-size:12px;color:var(--ink-soft);}
+  .child-price-info{display:flex;flex-wrap:wrap;gap:6px;margin:.35rem 0 0 2.6rem;}
   .stamp-wrap{flex-shrink:0;padding-top:1px;}
   .stamp{
     width:22px;height:22px;border-radius:50%;border:1.5px solid var(--line-strong);
@@ -192,8 +196,16 @@
   .buy-row.checked .buy-row-name{text-decoration:line-through;color:var(--ink-faint);}
   .buy-row-body{flex:1;min-width:0;}
   .buy-row-name{font-size:13.5px;font-weight:500;margin:0 0 .3rem;}
-  .buy-row-meta{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-top:.3rem;}
-  .buy-row-meta .budget-real-input{width:80px;}
+  .buy-row-meta{display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin-top:.3rem;}
+  .buy-row-meta .budget-real-input{width:100px;min-width:100px;}
+  .buy-row-meta .budget-real-input::-webkit-inner-spin-button,
+  .buy-row-meta .budget-real-input::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  .buy-row-meta .budget-real-input {
+    -moz-appearance: textfield;
+  }
   .buy-row-meta .mono{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--ink-soft);}
   .modal-overlay{position:fixed;inset:0;background:rgba(20,16,10,0.45);display:flex;align-items:center;justify-content:center;z-index:100;padding:1rem;}
   .modal-overlay.hidden{display:none;}

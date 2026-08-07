@@ -1,13 +1,13 @@
 import { CHAPTERS_META } from "../data.js";
 import { chapterSections, allItems, countChecked, acheterRows } from "../logic.js";
 
-export default function TabBar({ activeChapter, onSelect, state, customItems, customSections, budget }) {
+export default function TabBar({ activeChapter, onSelect, state, customItems, customSections, budget, buyOverrides }) {
   return (
     <div id="tabs" className="tabs">
       {CHAPTERS_META.map((c) => {
         let done, total;
         if (c.key === "acheter") {
-          const rows = acheterRows(budget, state, customItems, customSections);
+          const rows = acheterRows(budget, state, customItems, customSections, buyOverrides);
           total = rows.length;
           done = rows.filter((r) => r.bought).length;
         } else {

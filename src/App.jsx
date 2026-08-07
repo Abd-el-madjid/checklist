@@ -1,12 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import { CHAPTERS_META, DEPART_SECS, BAGAGE_SECS, ACHETER_SECS, AFTER_SECS } from "./data.js";
+import { CHAPTERS_META, BAGAGE_SECS, ACHETER_SECS } from "./data.js";
 import {
   chapterSections,
   sectionItems,
+  ownSectionItems,
   allItems,
+  allOwnSectionsList,
   effectiveIsBuy,
+  effectiveHave,
   effectiveEst,
+  effectiveQty,
   findItemById,
+  findItemOrigin,
 } from "./logic.js";
 import {
   loadCachedLocal,
@@ -44,6 +49,7 @@ export default function App() {
   const [activeChapter, setActiveChapter] = useState("depart");
   const [openSections, setOpenSections] = useState({});
   const [openDetails, setOpenDetails] = useState({});
+  const [openChildren, setOpenChildren] = useState({});
   const [syncNote, setSyncNote] = useState("chargement…");
   const [resetArmed, setResetArmed] = useState(false);
   const resetTimerRef = useRef(null);
@@ -52,10 +58,15 @@ export default function App() {
   const [confirmModal, setConfirmModal] = useState({ open: false, message: "" });
   const confirmCallbackRef = useRef(null);
 
-  const [buyModal, setBuyModal] = useState({ open: false, itemName: "", defaultPrice: 0 });
+  const [buyModal, setBuyModal] = useState({
+    open: false,
+    itemName: "",
+    defaultPrice: 0,
+    defaultQuantity: 1,
+  });
   const buyModalItemRef = useRef(null);
 
-  const [realPriceModal, setRealPriceModal] = useState({ open: false, itemName: "", defaultPrice: 0 });
+  const [realPriceModal, setRealPriceModal] = useState({ open: false, itemName: "", defaultPrice: 0, defaultQuantity: 1 });
   const realPriceCallbackRef = useRef(null);
 
   const [addItemModalOpen, setAddItemModalOpen] = useState(false);
@@ -157,40 +168,130 @@ export default function App() {
   }
 
   function openBuyModal(it) {
+    const qty = effectiveQty(it, buyOverrides) || 1;
     buyModalItemRef.current = it;
-    setBuyModal({ open: true, itemName: it.t, defaultPrice: effectiveEst(it, buyOverrides) || "" });
+    setBuyModal({
+      open: true,
+      itemName: it.t,
+      defaultPrice: effectiveEst(it, buyOverrides) || "",
+      defaultQuantity: qty,
+    });
   }
   function closeBuyModal() {
     buyModalItemRef.current = null;
-    setBuyModal({ open: false, itemName: "", defaultPrice: 0 });
+    setBuyModal({ open: false, itemName: "", defaultPrice: 0, defaultQuantity: 1 });
   }
-  function handleBuyModalConfirm(price) {
+  function handleBuyModalConfirm({ price, quantity }) {
     const it = buyModalItemRef.current;
     if (!it) return closeBuyModal();
     const est = Number(price) || 0;
-    setBuyOverrides((prev) => ({ ...prev, [it.id]: { buy: true, est } }));
+    const qty = Number(quantity) || 1;
+    setBuyOverrides((prev) => ({ ...prev, [it.id]: { buy: true, est, qty } }));
     setBudget((prev) => {
       const exists = prev.items.some((b) => b.id === "b-" + it.id);
       const items = exists
-        ? prev.items.map((b) => (b.id === "b-" + it.id ? { ...b, est } : b))
-        : [...prev.items, { id: "b-" + it.id, name: it.t, est, real: null }];
+        ? prev.items.map((b) =>
+            b.id === "b-" + it.id ? { ...b, est, qty, real: b.real } : b
+          )
+        : [...prev.items, { id: "b-" + it.id, name: it.t, est, qty, real: null }];
       return { ...prev, items };
     });
     closeBuyModal();
   }
 
-  function openRealPriceModal(itemName, defaultPrice, cb) {
+  function openRealPriceModal(itemName, defaultPrice, defaultQuantity, cb) {
     realPriceCallbackRef.current = cb;
-    setRealPriceModal({ open: true, itemName, defaultPrice: defaultPrice || "" });
+    setRealPriceModal({ open: true, itemName, defaultPrice: defaultPrice || "", defaultQuantity });
   }
   function closeRealPriceModal() {
     realPriceCallbackRef.current = null;
-    setRealPriceModal({ open: false, itemName: "", defaultPrice: 0 });
+    setRealPriceModal({ open: false, itemName: "", defaultPrice: 0, defaultQuantity: 1 });
   }
-  function handleRealPriceConfirm(price) {
+  function handleRealPriceConfirm(price, quantity) {
     const cb = realPriceCallbackRef.current;
     closeRealPriceModal();
-    if (cb) cb(Number(price) || 0);
+    if (cb) cb({ price: Number(price) || 0, quantity: Number(quantity) || 1 });
+  }
+
+  function getBudgetRowRealTotal(row) {
+    if (!row) return null;
+    if (row.realUnit !== undefined && row.realQty !== undefined) {
+      return Number(row.realUnit || 0) * Number(row.realQty || 0);
+    }
+    if (row.real !== undefined && row.real !== null) {
+      return Number(row.real);
+    }
+    return null;
+  }
+
+  function getBudgetRowRealUnit(row) {
+    if (row.realUnit !== undefined) return Number(row.realUnit || 0);
+    if (row.real !== undefined && row.real !== null && row.qty) {
+      return Number(row.real) / Number(row.qty);
+    }
+    return 0;
+  }
+
+  function getBudgetRowRealQty(row) {
+    if (row.realQty !== undefined) return Number(row.realQty || 0);
+    if (row.real !== undefined && row.real !== null && row.realUnit) {
+      return Math.max(1, Math.round(Number(row.real) / Number(row.realUnit)));
+    }
+    return row.qty || 1;
+  }
+
+  function findChildItems(parentId) {
+    return allOwnSectionsList(customSections)
+      .flatMap((sec) => ownSectionItems(sec, customItems))
+      .filter((item) => item.childOf === parentId);
+  }
+
+  function ensureChildrenForParent(parentId, parentName, sectionId, qty) {
+    setCustomItems((prev) => {
+      const sectionItems = prev[sectionId] || [];
+      const parentChildren = sectionItems.filter((item) => item.childOf === parentId);
+      const otherItems = sectionItems.filter((item) => item.childOf !== parentId);
+      if (qty <= 1) {
+        return { ...prev, [sectionId]: otherItems };
+      }
+      const nextChildren = Array.from({ length: qty }, (_, index) => {
+        const childId = `custom-${parentId}-child-${index + 1}`;
+        const existingChild = parentChildren[index];
+        return existingChild
+          ? { ...existingChild, id: childId, t: `${parentName} (${index + 1}/${qty})` }
+          : {
+              id: childId,
+              t: `${parentName} (${index + 1}/${qty})`,
+              d: "",
+              s: "",
+              g: ["custom"],
+              childOf: parentId,
+            };
+      });
+      return { ...prev, [sectionId]: [...otherItems, ...nextChildren] };
+    });
+  }
+
+  function removeChildrenForParent(parentId) {
+    setCustomItems((prev) => {
+      const next = {};
+      Object.keys(prev).forEach((sectionId) => {
+        next[sectionId] = (prev[sectionId] || []).filter((item) => item.childOf !== parentId);
+      });
+      return next;
+    });
+  }
+
+  function syncChildParentState(itemId, nextChecked) {
+    const children = findChildItems(itemId);
+    if (!children.length) return;
+    setState((prev) => {
+      const next = { ...prev, [itemId]: nextChecked };
+      children.forEach((child) => {
+        next[child.id] = nextChecked;
+      });
+      return next;
+    });
   }
 
   // ===== item / section interactions =====
@@ -200,6 +301,7 @@ export default function App() {
       openConfirmModal(`Retirer « ${it.t} » de la liste à acheter ?`, () => {
         setBuyOverrides((prev) => ({ ...prev, [it.id]: { buy: false } }));
         setBudget((prev) => ({ ...prev, items: prev.items.filter((b) => b.id !== "b-" + it.id) }));
+        removeChildrenForParent(it.id);
       });
     } else {
       openBuyModal(it);
@@ -207,25 +309,104 @@ export default function App() {
   }
 
   function handleItemToggleCheck(it, sectionId, isBuy) {
+    const buyLinkId = "b-" + it.id;
+    const isChild = !!it.childOf;
+    const children = isChild ? [] : findChildItems(it.id);
+
     if (state[it.id]) {
       openConfirmModal(`Décocher « ${it.t} » ?`, () => {
-        setState((prev) => ({ ...prev, [it.id]: false }));
+        setState((prev) => {
+          const next = { ...prev, [it.id]: false };
+          if (!isChild && children.length) {
+            children.forEach((child) => {
+              next[child.id] = false;
+            });
+          }
+          if (isChild && it.childOf) {
+            const siblings = findChildItems(it.childOf);
+            const anyChecked = siblings.some((child) => child.id !== it.id ? prev[child.id] : false);
+            next[it.childOf] = anyChecked;
+          }
+          return next;
+        });
+        if (isBuy) {
+          setBudget((prev) => ({
+            ...prev,
+            items: prev.items.map((b) =>
+              b.id === buyLinkId ? { ...b, bought: false } : b,
+            ),
+          }));
+        }
       });
       return;
     }
-    if (isBuy) {
-      const buyLinkId = "b-" + it.id;
-      const bItem = budget.items.find((b) => b.id === buyLinkId);
-      const defaultPrice = bItem ? (bItem.real ?? bItem.est) : 0;
-      openRealPriceModal(it.t, defaultPrice, (price) => {
-        setState((prev) => ({ ...prev, [it.id]: true }));
+
+    if (isChild && it.childOf) {
+      setState((prev) => {
+        const next = { ...prev, [it.id]: true };
+        const parentId = it.childOf;
+        const siblings = findChildItems(parentId);
+        const allChecked = siblings.every((child) => child.id === it.id ? true : !!prev[child.id]);
+        next[parentId] = allChecked;
+        return next;
+      });
+      return;
+    }
+
+    if (children.length) {
+      setState((prev) => {
+        const next = { ...prev, [it.id]: true };
+        children.forEach((child) => {
+          next[child.id] = true;
+        });
+        return next;
+      });
+      if (isBuy) {
         setBudget((prev) => ({
           ...prev,
-          items: prev.items.map((b) => (b.id === buyLinkId ? { ...b, real: price } : b)),
+          items: prev.items.map((b) =>
+            b.id === buyLinkId ? { ...b, bought: true } : b,
+          ),
         }));
+      }
+      return;
+    }
+
+    if (isBuy) {
+      const est = effectiveEst(it, buyOverrides) || 0;
+      const qty = effectiveQty(it, buyOverrides) || 1;
+      setState((prev) => ({ ...prev, [it.id]: true }));
+      setBudget((prev) => {
+        const exists = prev.items.some((b) => b.id === buyLinkId);
+        if (exists) {
+          return {
+            ...prev,
+            items: prev.items.map((b) =>
+              b.id === buyLinkId
+                ? {
+                    ...b,
+                    est,
+                    qty,
+                    realUnit: b.realUnit,
+                    realQty: b.realQty,
+                    real: b.real,
+                    bought: true,
+                  }
+                : b,
+            ),
+          };
+        }
+        return {
+          ...prev,
+          items: [
+            ...prev.items,
+            { id: buyLinkId, name: it.t, est, qty, realUnit: null, realQty: null, real: null, bought: true },
+          ],
+        };
       });
       return;
     }
+
     setState((prev) => ({ ...prev, [it.id]: true }));
   }
 
@@ -234,6 +415,10 @@ export default function App() {
   }
   function handleToggleDetail(itemId) {
     setOpenDetails((prev) => ({ ...prev, [itemId]: !prev[itemId] }));
+  }
+
+  function handleToggleChildren(itemId) {
+    setOpenChildren((prev) => ({ ...prev, [itemId]: !prev[itemId] }));
   }
 
   function handleDeleteItem(ownerSectionId, itemId, itemName) {
@@ -251,11 +436,14 @@ export default function App() {
       if (item && (item.g || []).includes("buy")) {
         setBudget((prev) => ({ ...prev, items: prev.items.filter((b) => b.id !== "b-" + itemId) }));
       }
+      if (item && !item.childOf) {
+        removeChildrenForParent(item.id);
+      }
     });
   }
 
   // ===== add item / add section =====
-  function addItem({ sectionId, text, mustBuy, price, tag, comment }) {
+  function addItem({ sectionId, text, mustBuy, price, quantity, tag, comment }) {
     const value = (text || "").trim();
     if (!value) return null;
     const id = "custom-" + Date.now() + "-" + Math.floor(Math.random() * 1000);
@@ -263,12 +451,15 @@ export default function App() {
     if (tag) g.push(tag);
     if (mustBuy) g.push("buy");
     const item = { id, t: value, d: (comment || "").trim(), s: "", g };
-    if (mustBuy) item.est = Number(price) || 0;
+    if (mustBuy) {
+      item.est = Number(price) || 0;
+      item.qty = Number(quantity) || 1;
+    }
     setCustomItems((prev) => ({ ...prev, [sectionId]: [...(prev[sectionId] || []), item] }));
     if (mustBuy) {
       setBudget((prev) => ({
         ...prev,
-        items: [...prev.items, { id: "b-" + id, name: value, est: item.est, real: null }],
+        items: [...prev.items, { id: "b-" + id, name: value, est: item.est, qty: item.qty, real: null }],
       }));
     }
     return sectionId;
@@ -304,37 +495,110 @@ export default function App() {
   }
 
   // ===== budget panel interactions =====
+  function toggleHaveTag(it) {
+    const currentHave = effectiveHave(it, buyOverrides);
+    setBuyOverrides((prev) => ({
+      ...prev,
+      [it.id]: { ...(prev[it.id] || {}), have: !currentHave },
+    }));
+  }
+
   function handleBuyRowToggle({ b, linkedId, bought, name }) {
     if (bought) {
       openConfirmModal(`Décocher « ${name} » ?`, () => {
         if (linkedId) {
-          setState((prev) => ({ ...prev, [linkedId]: false }));
-        } else {
-          setBudget((prev) => ({
-            ...prev,
-            items: prev.items.map((it) => (it.id === b.id ? { ...it, bought: false } : it)),
-          }));
+          removeChildrenForParent(linkedId);
         }
+        setBudget((prev) => ({
+          ...prev,
+          items: prev.items.map((it) =>
+            it.id === b.id ? { ...it, bought: false } : it,
+          ),
+        }));
       });
       return;
     }
-    const defaultPrice = b.real ?? b.est;
-    openRealPriceModal(name, defaultPrice, (price) => {
-      if (linkedId) setState((prev) => ({ ...prev, [linkedId]: true }));
+    const defaultUnit = b.realUnit ?? (b.real !== undefined && b.real !== null && b.qty ? Number(b.real) / Number(b.qty) : b.est) ?? 0;
+    const defaultQty = b.realQty ?? b.qty ?? 1;
+    openRealPriceModal(name, defaultUnit, defaultQty, ({ price, quantity }) => {
+      const sectionOrigin = linkedId ? findItemOrigin(linkedId, customItems, customSections) : null;
+      if (linkedId && sectionOrigin) {
+        ensureChildrenForParent(linkedId, name, sectionOrigin.sectionId, quantity);
+      }
       setBudget((prev) => ({
         ...prev,
         items: prev.items.map((it) =>
-          it.id === b.id ? { ...it, real: price, bought: linkedId ? it.bought : true } : it
+          it.id === b.id
+            ? {
+                ...it,
+                realUnit: price,
+                realQty: quantity,
+                real: price * quantity,
+                bought: true,
+              }
+            : it,
         ),
       }));
     });
+  
   }
 
-  function handleBudgetRealChange(id, value) {
+  function handleBudgetEstQtyChange(id, value) {
     setBudget((prev) => ({
       ...prev,
-      items: prev.items.map((b) => (b.id === id ? { ...b, real: value === "" ? null : Number(value) } : b)),
+      items: prev.items.map((b) =>
+        b.id === id
+          ? {
+              ...b,
+              qty: value === "" ? 1 : Math.max(1, Number(value)),
+            }
+          : b,
+      ),
     }));
+  }
+
+  function handleBudgetRealUnitChange(id, value) {
+    setBudget((prev) => ({
+      ...prev,
+      items: prev.items.map((b) =>
+        b.id === id
+          ? {
+              ...b,
+              realUnit: value === "" ? null : Number(value),
+              real:
+                value === "" || b.realQty == null
+                  ? b.real
+                  : Number(value) * Number(b.realQty || 1),
+            }
+          : b,
+      ),
+    }));
+  }
+
+  function handleBudgetRealQtyChange(id, value) {
+    setBudget((prev) => {
+      const nextItems = prev.items.map((b) =>
+        b.id === id
+          ? {
+              ...b,
+              realQty: value === "" ? null : Math.max(1, Number(value)),
+              real:
+                value === "" || b.realUnit == null
+                  ? b.real
+                  : Number(b.realUnit || 0) * Math.max(1, Number(value)),
+            }
+          : b,
+      );
+      const updatedRow = nextItems.find((item) => item.id === id);
+      if (updatedRow && updatedRow.bought && updatedRow.id.startsWith("b-")) {
+        const linkedId = updatedRow.id.slice(2);
+        const origin = findItemOrigin(linkedId, customItems, customSections);
+        if (origin) {
+          ensureChildrenForParent(linkedId, updatedRow.name, origin.sectionId, updatedRow.realQty || 1);
+        }
+      }
+      return { ...prev, items: nextItems };
+    });
   }
 
   function handleDeleteBudgetRow(id) {
@@ -344,6 +608,9 @@ export default function App() {
       const linkedId = id.startsWith("b-") ? id.slice(2) : null;
       if (linkedId && findItemById(linkedId, customItems, customSections)) {
         setBuyOverrides((prev) => ({ ...prev, [linkedId]: { buy: false } }));
+      }
+      if (linkedId) {
+        removeChildrenForParent(linkedId);
       }
     });
   }
@@ -376,19 +643,19 @@ export default function App() {
     const strip = (it) => {
       const isBuy = effectiveIsBuy(it, buyOverrides);
       const est = effectiveEst(it, buyOverrides);
+      const qty = effectiveQty(it, buyOverrides);
       const outG = (it.g || []).filter((x) => x !== "custom" && x !== "buy");
       if (isBuy) outG.push("buy");
       const out = { id: it.id, t: it.t, d: it.d || "", s: it.s || "", g: outG };
       if (isBuy && est !== undefined) out.est = est;
+      if (isBuy && qty !== undefined) out.qty = qty;
       return out;
     };
     const merge = (secs) =>
       secs.map((sec) => ({ ...sec, items: sectionItems(sec, customItems, customSections).map(strip) }));
 
-    let out = "export const DEPART_SECS = " + JSON.stringify(merge(DEPART_SECS), null, 2) + ";\n\n";
-    out += "export const BAGAGE_SECS = " + JSON.stringify(merge(BAGAGE_SECS), null, 2) + ";\n\n";
+    let out = "export const BAGAGE_SECS = " + JSON.stringify(merge(BAGAGE_SECS), null, 2) + ";\n\n";
     out += "export const ACHETER_SECS = " + JSON.stringify(merge(ACHETER_SECS), null, 2) + ";\n\n";
-    out += "export const AFTER_SECS = " + JSON.stringify(merge(AFTER_SECS), null, 2) + ";\n\n";
     out += "export const BUDGET = " + JSON.stringify(budget, null, 2) + ";\n";
     return out;
   }
@@ -432,6 +699,7 @@ export default function App() {
           customItems={customItems}
           customSections={customSections}
           budget={budget}
+          buyOverrides={buyOverrides}
         />
       </div>
 
@@ -441,10 +709,13 @@ export default function App() {
             <BudgetPanel
               budget={budget}
               state={state}
+              buyOverrides={buyOverrides}
               customItems={customItems}
               customSections={customSections}
               onToggleRow={handleBuyRowToggle}
-              onRealChange={handleBudgetRealChange}
+              onEstQtyChange={handleBudgetEstQtyChange}
+              onRealUnitChange={handleBudgetRealUnitChange}
+              onRealQtyChange={handleBudgetRealQtyChange}
               onDeleteRow={handleDeleteBudgetRow}
               onTargetChange={handleBudgetTargetChange}
             />
@@ -456,14 +727,18 @@ export default function App() {
                 customItems={customItems}
                 customSections={customSections}
                 state={state}
+                budget={budget}
                 buyOverrides={buyOverrides}
                 openSections={openSections}
                 openDetails={openDetails}
+                openChildren={openChildren}
                 onToggleSection={handleToggleSection}
                 onToggleCheck={handleItemToggleCheck}
                 onToggleDetail={handleToggleDetail}
                 onDeleteItem={handleDeleteItem}
                 onToggleBuy={toggleBuyTag}
+                onToggleHave={toggleHaveTag}
+                onToggleChildren={handleToggleChildren}
               />
             ))
           )}
@@ -487,6 +762,7 @@ export default function App() {
         open={buyModal.open}
         itemName={buyModal.itemName}
         defaultPrice={buyModal.defaultPrice}
+        defaultQuantity={buyModal.defaultQuantity}
         onConfirm={handleBuyModalConfirm}
         onCancel={closeBuyModal}
       />
@@ -494,6 +770,7 @@ export default function App() {
         open={realPriceModal.open}
         itemName={realPriceModal.itemName}
         defaultPrice={realPriceModal.defaultPrice}
+        defaultQuantity={realPriceModal.defaultQuantity}
         onConfirm={handleRealPriceConfirm}
         onCancel={closeRealPriceModal}
       />
@@ -502,6 +779,7 @@ export default function App() {
         activeChapter={activeChapter}
         openSections={openSections}
         customSections={customSections}
+        customItems={customItems}
         onConfirm={handleAddItemConfirm}
         onCancel={() => setAddItemModalOpen(false)}
       />

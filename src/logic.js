@@ -48,6 +48,27 @@ export function ownSectionItems(sec, customItems) {
 // what gives the "one checkbox, two lists" behaviour.
 export function sectionItems(sec, customItems, customSections) {
   const own = ownSectionItems(sec, customItems);
+  const childrenByParent = {};
+  const parentItems = [];
+
+  own.forEach((it) => {
+    if (it.childOf) {
+      childrenByParent[it.childOf] = childrenByParent[it.childOf] || [];
+      childrenByParent[it.childOf].push(it);
+    } else {
+      parentItems.push(it);
+    }
+  });
+
+  const sortedOwn = parentItems.flatMap((parent) =>
+    [parent].concat(childrenByParent[parent.id] || []),
+  );
+  const orphanChildren = Object.values(childrenByParent)
+    .flat()
+    .filter(
+      (child) => !parentItems.some((parent) => parent.id === child.childOf),
+    );
+
   const linkedFrom = allSectionsFlat(customSections).filter(
     (x) => x.sec.linkedSectionId === sec.id,
   );
@@ -58,7 +79,8 @@ export function sectionItems(sec, customItems, customSections) {
       __ownerSectionId: x.sec.id,
     })),
   );
-  return own.concat(linkedItems);
+
+  return sortedOwn.concat(linkedItems).concat(orphanChildren);
 }
 
 export function allItems(secs, customItems) {
@@ -99,7 +121,15 @@ export function findItemOrigin(id, customItems, customSections) {
     const found = ownSectionItems(x.sec, customItems).find(
       (it) => it.id === id,
     );
-    if (found) return { chapterLabel: x.chapterLabel, sectionName: x.sec.nm };
+    if (found) {
+      return {
+        chapterKey: x.chapterKey,
+        chapterLabel: x.chapterLabel,
+        sectionId: x.sec.id,
+        sectionName: x.sec.nm,
+        section: x.sec,
+      };
+    }
   }
   return null;
 }
@@ -107,17 +137,28 @@ export function findItemOrigin(id, customItems, customSections) {
 // A section allows the "à acheter" (buy) ticket if it is a built-in
 // Bagages/Acheter section, or a custom section explicitly flagged with
 // hasPrices when it was created.
-export function sectionHasPrices(sectionId, customSections) {
+export function sectionHasPrices(sectionId, customItems, customSections) {
   const found = allSectionsFlat(customSections).find(
     (x) => x.sec.id === sectionId,
   );
   if (!found) return false;
   if (found.sec.hasPrices) return true;
-  const isCustom = String(found.sec.id).startsWith("custom-sec-");
-  return (
-    !isCustom &&
-    (found.chapterKey === "bagages" || found.chapterKey === "acheter")
+  if (found.chapterKey === "bagages") return true;
+
+  const ownBuyItem = (found.sec.items || []).some((it) =>
+    (it.g || []).includes("buy"),
   );
+  if (ownBuyItem) return true;
+
+  const customBuyItem = (customItems[sectionId] || []).some((it) =>
+    (it.g || []).includes("buy"),
+  );
+  if (customBuyItem) return true;
+
+  const linkedFrom = allSectionsFlat(customSections).some(
+    (x) => x.sec.linkedSectionId === sectionId,
+  );
+  return linkedFrom;
 }
 
 export function effectiveIsBuy(it, buyOverrides) {
@@ -127,6 +168,37 @@ export function effectiveIsBuy(it, buyOverrides) {
   return (it.g || []).includes("buy");
 }
 
+export function effectiveHave(it, buyOverrides) {
+  if (Object.prototype.hasOwnProperty.call(buyOverrides, it.id)) {
+    return !!buyOverrides[it.id].have;
+  }
+  return false;
+}
+
+function parseEstimatedPrice(it) {
+  if (typeof it.d !== "string") return undefined;
+  const estMatch = it.d.match(/prix estim[eé]\s*[:]?\s*([0-9]+)\s*(?:DA|€)/i);
+  if (estMatch) return Number(estMatch[1]);
+  return undefined;
+}
+
+function parseEstimatedQty(it) {
+  if (typeof it.d !== "string") return undefined;
+  const qtyMatch = it.d.match(
+    /([0-9]+)\s*(?:unit(?:é|és)|pi[eè]ce|paire|paires|unité|unités)/i,
+  );
+  if (qtyMatch) return Number(qtyMatch[1]);
+  return undefined;
+}
+
+function budgetRowRealTotal(row) {
+  if (row.real !== undefined && row.real !== null) return Number(row.real);
+  if (row.realUnit !== undefined && row.realQty !== undefined) {
+    return Number(row.realUnit || 0) * Number(row.realQty || 0);
+  }
+  return null;
+}
+
 export function effectiveEst(it, buyOverrides) {
   if (
     Object.prototype.hasOwnProperty.call(buyOverrides, it.id) &&
@@ -134,23 +206,100 @@ export function effectiveEst(it, buyOverrides) {
   ) {
     return buyOverrides[it.id].est;
   }
-  return it.est;
+  if (it.est !== undefined) return it.est;
+  return parseEstimatedPrice(it);
 }
 
-// The Acheter tab is driven entirely off budget.items, each optionally
-// linked back to a real checklist item (id "b-" + itemId).
-export function acheterRows(budget, state, customItems, customSections) {
-  return budget.items.map((b) => {
+export function effectiveQty(it, buyOverrides) {
+  if (
+    Object.prototype.hasOwnProperty.call(buyOverrides, it.id) &&
+    buyOverrides[it.id].qty !== undefined
+  ) {
+    return buyOverrides[it.id].qty;
+  }
+  if (it.qty !== undefined) return it.qty;
+  return parseEstimatedQty(it) || 1;
+}
+
+function buildBuyChecklistRows(
+  budget,
+  state,
+  customItems,
+  customSections,
+  buyOverrides,
+) {
+  const rows = [];
+  const seenBudgetIds = new Set();
+
+  allOwnSectionsList(customSections).forEach((sec) => {
+    ownSectionItems(sec, customItems)
+      .filter((it) => effectiveIsBuy(it, buyOverrides))
+      .forEach((it) => {
+        const rowId = "b-" + it.id;
+        const budgetRow = budget.items.find((b) => b.id === rowId);
+        const est = budgetRow ? budgetRow.est : effectiveEst(it, buyOverrides);
+        const qty = budgetRow ? budgetRow.qty : effectiveQty(it, buyOverrides);
+        const real = budgetRow ? budgetRowRealTotal(budgetRow) : null;
+        const realUnit = budgetRow ? budgetRow.realUnit : undefined;
+        const realQty = budgetRow ? budgetRow.realQty : undefined;
+        const checkedFromSection = !!state[it.id];
+        const boughtFromBudget = !!(budgetRow && budgetRow.bought);
+        const bought = checkedFromSection || boughtFromBudget;
+        rows.push({
+          b: { id: rowId, name: it.t, est, qty, real, realUnit, realQty },
+          linkedId: it.id,
+          linkedItem: it,
+          bought,
+          checkedFromSection,
+          boughtFromBudget,
+          name: it.t,
+          desc: it.d || "",
+          details: it.s || "",
+          tags: it.g || [],
+          origin: findItemOrigin(it.id, customItems, customSections),
+        });
+        if (budgetRow) seenBudgetIds.add(rowId);
+      });
+  });
+
+  budget.items.forEach((b) => {
+    if (b.id.startsWith("b-") && seenBudgetIds.has(b.id)) return;
     const linkedId = b.id.startsWith("b-") ? b.id.slice(2) : null;
     const linkedItem = linkedId
       ? findItemById(linkedId, customItems, customSections)
       : null;
-    const bought = linkedItem ? !!state[linkedId] : !!b.bought;
-    const name = linkedItem ? linkedItem.t : b.name;
-    const desc = linkedItem ? linkedItem.d : "";
-    const origin = linkedId
-      ? findItemOrigin(linkedId, customItems, customSections)
-      : null;
-    return { b, linkedId, linkedItem, bought, name, desc, origin };
+    if (linkedItem) return;
+
+    rows.push({
+      b,
+      linkedId,
+      linkedItem: null,
+      bought: !!b.bought,
+      checkedFromSection: false,
+      boughtFromBudget: !!b.bought,
+      name: b.name,
+      desc: "",
+      origin: null,
+    });
   });
+
+  return rows;
+}
+
+// The Acheter tab is driven off the budget rows plus any checklist items
+// marked as buy-enabled, even if they were not explicitly added first.
+export function acheterRows(
+  budget,
+  state,
+  customItems,
+  customSections,
+  buyOverrides,
+) {
+  return buildBuyChecklistRows(
+    budget,
+    state,
+    customItems,
+    customSections,
+    buyOverrides,
+  );
 }
