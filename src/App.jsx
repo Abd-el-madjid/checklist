@@ -17,6 +17,7 @@ import {
   loadCachedLocal,
   fetchRemoteState,
   saveRemoteState,
+  defaultAppState,
 } from "./storage.js";
 
 import Ticket from "./components/Ticket.jsx";
@@ -637,7 +638,21 @@ export default function App() {
       resetTimerRef.current = setTimeout(() => setResetArmed(false), 3000);
     }
   }
-
+  function handleRestoreOriginal() {
+    openConfirmModal(
+      "Restaurer l'état original ? Cela réinitialisera toutes les données et écrasera l'état actuel.",
+      () => {
+        const defaults = defaultAppState(CHAPTER_KEYS);
+        setState(defaults.state);
+        setCustomItems(defaults.customItems);
+        setBudget(defaults.budget);
+        setBuyOverrides(defaults.buyOverrides);
+        setCustomSections(defaults.customSections);
+        setResetArmed(false);
+        clearTimeout(resetTimerRef.current);
+      },
+    );
+  }
   // ===== export data.js =====
   function buildExport() {
     const strip = (it) => {
@@ -748,6 +763,9 @@ export default function App() {
       <div className="foot-row" style={{ display: activeChapter === "acheter" ? "none" : "flex" }}>
         <button className="reset-btn" onClick={handleResetClick}>
           {resetArmed ? "cliquer à nouveau pour confirmer" : "réinitialiser cette section"}
+        </button>
+        <button className="reset-btn" onClick={handleRestoreOriginal}>
+          restaurer l'original
         </button>
         <span className="sync-note">{syncNote}</span>
       </div>
