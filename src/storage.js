@@ -8,6 +8,7 @@ const KEYS = {
   budget: "dossier-budget",
   buyOverrides: "dossier-buy-overrides",
   customSections: "dossier-custom-sections",
+  bagagePacking: "dossier-bagage-packing",
 };
 
 export function loadState() {
@@ -28,7 +29,9 @@ export function loadCustomItems() {
 
 export function loadBudget() {
   try {
-    return JSON.parse(localStorage.getItem(KEYS.budget) || '{"target":0,"items":[]}');
+    return JSON.parse(
+      localStorage.getItem(KEYS.budget) || '{"target":0,"items":[]}',
+    );
   } catch {
     return { target: 0, items: [] };
   }
@@ -47,7 +50,7 @@ export function loadCustomSections(chapterKeys) {
   try {
     parsed = JSON.parse(
       localStorage.getItem(KEYS.customSections) ||
-        '{"depart":[],"bagages":[],"acheter":[],"after":[]}'
+        '{"depart":[],"bagages":[],"acheter":[],"after":[]}',
     );
   } catch {
     parsed = {};
@@ -58,20 +61,34 @@ export function loadCustomSections(chapterKeys) {
   return parsed;
 }
 
-export function saveAll({ state, customItems, budget, buyOverrides, customSections }) {
+export function loadBagagePacking() {
+  try {
+    return JSON.parse(localStorage.getItem(KEYS.bagagePacking) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+export function saveAll({
+  state,
+  customItems,
+  budget,
+  buyOverrides,
+  customSections,
+  bagagePacking,
+}) {
   try {
     localStorage.setItem(KEYS.state, JSON.stringify(state));
     localStorage.setItem(KEYS.customItems, JSON.stringify(customItems));
     localStorage.setItem(KEYS.budget, JSON.stringify(budget));
     localStorage.setItem(KEYS.buyOverrides, JSON.stringify(buyOverrides));
     localStorage.setItem(KEYS.customSections, JSON.stringify(customSections));
+    localStorage.setItem(KEYS.bagagePacking, JSON.stringify(bagagePacking));
     return true;
   } catch {
     return false;
   }
 }
-
-
 
 // Shared persistence: the app's state now lives in a Cloudflare KV
 // namespace behind a small Pages Function (see /functions/api/state.js),
@@ -98,6 +115,7 @@ export function defaultAppState(chapterKeys) {
     budget: { target: 0, items: [] },
     buyOverrides: {},
     customSections,
+    bagagePacking: {},
   };
 }
 
@@ -109,6 +127,7 @@ export function loadCachedLocal(chapterKeys) {
     if (!raw) return defaultAppState(chapterKeys);
     const parsed = JSON.parse(raw);
     if (!parsed.customSections) parsed.customSections = {};
+    if (!parsed.bagagePacking) parsed.bagagePacking = {};
     chapterKeys.forEach((k) => {
       if (!parsed.customSections[k]) parsed.customSections[k] = [];
     });

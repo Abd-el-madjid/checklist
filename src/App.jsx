@@ -45,9 +45,11 @@ export default function App() {
   const [budget, setBudget] = useState(initialCache.budget);
   const [buyOverrides, setBuyOverrides] = useState(initialCache.buyOverrides);
   const [customSections, setCustomSections] = useState(initialCache.customSections);
+  const [bagagePacking, setBagagePacking] = useState(initialCache.bagagePacking || {});
 
   // ----- UI-only state -----
   const [activeChapter, setActiveChapter] = useState("depart");
+  const [bagageFilter, setBagageFilter] = useState("all");
   const [openSections, setOpenSections] = useState({});
   const [openDetails, setOpenDetails] = useState({});
   const [openChildren, setOpenChildren] = useState({});
@@ -86,6 +88,7 @@ export default function App() {
     setBudget(remote.budget);
     setBuyOverrides(remote.buyOverrides);
     setCustomSections(remote.customSections);
+    setBagagePacking(remote.bagagePacking || {});
   }
 
   useEffect(() => {
@@ -111,7 +114,7 @@ export default function App() {
       if (Date.now() - lastLocalEditRef.current < QUIET_PERIOD_MS) return;
       const remote = await fetchRemoteState(CHAPTER_KEYS);
       if (!remote) return;
-      const current = JSON.stringify({ state, customItems, budget, buyOverrides, customSections });
+      const current = JSON.stringify({ state, customItems, budget, buyOverrides, customSections, bagagePacking });
       if (JSON.stringify(remote) !== current) {
         applyRemote(remote);
         setSyncNote("mis à jour depuis un autre appareil");
@@ -129,7 +132,7 @@ export default function App() {
       window.removeEventListener("focus", onVisible);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state, customItems, budget, buyOverrides, customSections]);
+  }, [state, customItems, budget, buyOverrides, customSections, bagagePacking]);
 
   // ----- persistence: debounce-save whenever core state changes, push to
   // the shared API so every device picks it up -----
@@ -146,7 +149,7 @@ export default function App() {
     setSyncNote("enregistrement…");
     clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(async () => {
-      const ok = await saveRemoteState({ state, customItems, budget, buyOverrides, customSections });
+      const ok = await saveRemoteState({ state, customItems, budget, buyOverrides, customSections, bagagePacking });
       setSyncNote(ok ? "synchronisé sur tous tes appareils" : "enregistré localement (hors ligne)");
     }, 400);
     return () => clearTimeout(saveTimerRef.current);
@@ -313,6 +316,8 @@ export default function App() {
     const buyLinkId = "b-" + it.id;
     const isChild = !!it.childOf;
     const children = isChild ? [] : findChildItems(it.id);
+    const origin = findItemOrigin(it.id, customItems, customSections);
+    const isBagagePackingItem = origin?.chapterKey === "bagages" && origin?.sectionId !== "nl-bagages";
 
     if (state[it.id]) {
       openConfirmModal(`Décocher « ${it.t} » ?`, () => {
@@ -330,6 +335,13 @@ export default function App() {
           }
           return next;
         });
+        if (isBagagePackingItem) {
+          setBagagePacking((prev) => {
+            const next = { ...prev };
+            delete next[it.id];
+            return next;
+          });
+        }
         if (isBuy) {
           setBudget((prev) => ({
             ...prev,
@@ -351,6 +363,9 @@ export default function App() {
         next[parentId] = allChecked;
         return next;
       });
+      if (isBagagePackingItem) {
+        setBagagePacking((prev) => ({ ...prev, [it.id]: prev[it.id] || "23" }));
+      }
       return;
     }
 
@@ -362,6 +377,9 @@ export default function App() {
         });
         return next;
       });
+      if (isBagagePackingItem) {
+        setBagagePacking((prev) => ({ ...prev, [it.id]: prev[it.id] || "23" }));
+      }
       if (isBuy) {
         setBudget((prev) => ({
           ...prev,
@@ -377,6 +395,9 @@ export default function App() {
       const est = effectiveEst(it, buyOverrides) || 0;
       const qty = effectiveQty(it, buyOverrides) || 1;
       setState((prev) => ({ ...prev, [it.id]: true }));
+      if (isBagagePackingItem) {
+        setBagagePacking((prev) => ({ ...prev, [it.id]: prev[it.id] || "23" }));
+      }
       setBudget((prev) => {
         const exists = prev.items.some((b) => b.id === buyLinkId);
         if (exists) {
@@ -430,6 +451,11 @@ export default function App() {
         [ownerSectionId]: (prev[ownerSectionId] || []).filter((i) => i.id !== itemId),
       }));
       setState((prev) => {
+        const next = { ...prev };
+        delete next[itemId];
+        return next;
+      });
+      setBagagePacking((prev) => {
         const next = { ...prev };
         delete next[itemId];
         return next;
@@ -602,6 +628,25 @@ export default function App() {
     });
   }
 
+function handleBagageAssignmentChange(itemId, assignment, itemName) {
+  const current = bagagePacking[itemId];
+
+  // first-time assignment (or re-picking the same one) — just set it
+  if (!current || current === assignment) {
+    setBagagePacking((prev) => ({ ...prev, [itemId]: assignment }));
+    return;
+  }
+
+  // already assigned to the other suitcase — confirm before switching
+  const label = (v) => (v === "23" ? "Valise soute — 23 kg" : "Bagage cabine — 10 kg");
+  openConfirmModal(
+    `Déplacer « ${itemName} » de ${label(current)} vers ${label(assignment)} ?`,
+    () => {
+      setBagagePacking((prev) => ({ ...prev, [itemId]: assignment }));
+    },
+  );
+}
+
   function handleDeleteBudgetRow(id) {
     const row = budget.items.find((b) => b.id === id);
     openConfirmModal(`Retirer « ${row ? row.name : "ce poste"} » du budget ?`, () => {
@@ -648,6 +693,7 @@ export default function App() {
         setBudget(defaults.budget);
         setBuyOverrides(defaults.buyOverrides);
         setCustomSections(defaults.customSections);
+        setBagagePacking(defaults.bagagePacking || {});
         setResetArmed(false);
         clearTimeout(resetTimerRef.current);
       },
@@ -688,6 +734,28 @@ export default function App() {
 
   // ===== render =====
   const sectionsForActiveChapter = chapterSections(activeChapter, customSections);
+  const bagageSectionItems = allItems(chapterSections("bagages", customSections), customItems);
+  const bagagePreparationCandidates = bagageSectionItems.filter((it) => {
+    const origin = findItemOrigin(it.id, customItems, customSections);
+    return origin?.chapterKey === "bagages" && origin?.sectionId !== "nl-bagages";
+  });
+  const checkedBagagePreparation = bagagePreparationCandidates.filter((it) => state[it.id]);
+  const bagageFilterOptions = [
+    { id: "all", label: "Tous" },
+    { id: "23", label: "23 kg" },
+    { id: "10", label: "10 kg" },
+    { id: "unassigned", label: "Non défini" },
+  ];
+  const filteredBagagePreparation = checkedBagagePreparation.filter((it) => {
+    if (bagageFilter === "all") return true;
+    if (bagageFilter === "unassigned") return !bagagePacking[it.id];
+    return bagagePacking[it.id] === bagageFilter;
+  });
+  const groupedBagagePreparation = {
+    "23": filteredBagagePreparation.filter((it) => bagagePacking[it.id] === "23"),
+    "10": filteredBagagePreparation.filter((it) => bagagePacking[it.id] === "10"),
+    unassigned: filteredBagagePreparation.filter((it) => !bagagePacking[it.id]),
+  };
 
   return (
     <div className="app">
@@ -735,27 +803,169 @@ export default function App() {
               onTargetChange={handleBudgetTargetChange}
             />
           ) : (
-            sectionsForActiveChapter.map((sec) => (
-              <SectionBlock
-                key={sec.id}
-                sec={sec}
-                customItems={customItems}
-                customSections={customSections}
-                state={state}
-                budget={budget}
-                buyOverrides={buyOverrides}
-                openSections={openSections}
-                openDetails={openDetails}
-                openChildren={openChildren}
-                onToggleSection={handleToggleSection}
-                onToggleCheck={handleItemToggleCheck}
-                onToggleDetail={handleToggleDetail}
-                onDeleteItem={handleDeleteItem}
-                onToggleBuy={toggleBuyTag}
-                onToggleHave={toggleHaveTag}
-                onToggleChildren={handleToggleChildren}
-              />
-            ))
+            <>
+                {activeChapter !== "preparation" &&
+                  sectionsForActiveChapter.map((sec) => (
+                <SectionBlock
+                  key={sec.id}
+                  sec={sec}
+                  customItems={customItems}
+                  customSections={customSections}
+                  state={state}
+                  budget={budget}
+                  buyOverrides={buyOverrides}
+                  openSections={openSections}
+                  openDetails={openDetails}
+                  openChildren={openChildren}
+                  onToggleSection={handleToggleSection}
+                  onToggleCheck={handleItemToggleCheck}
+                  onToggleDetail={handleToggleDetail}
+                  onDeleteItem={handleDeleteItem}
+                  onToggleBuy={toggleBuyTag}
+                  onToggleHave={toggleHaveTag}
+                  onToggleChildren={handleToggleChildren}
+                />
+              ))}
+              {activeChapter === "preparation" ? (
+                <div className="bagage-preparation-panel">
+                  <div className="bagage-packing-head">Préparation bagage</div>
+                  <div className="bagage-packing-controls">
+                    {bagageFilterOptions.map((option) => (
+                      <button
+                        key={option.id}
+                        type="button"
+                        className={`bagage-filter-btn ${bagageFilter === option.id ? "active" : ""}`}
+                        onClick={() => setBagageFilter(option.id)}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                  {checkedBagagePreparation.length === 0 ? (
+                    <div className="bagage-packing-empty">Coche des éléments dans Bagages pour les ajouter à Préparation.</div>
+                  ) : (
+                    <>
+                      {bagageFilter === "all" && groupedBagagePreparation["23"].length > 0 ? (
+                        <div className="bagage-packing-group">
+                          <div className="bagage-packing-group-title">Valise soute — 23 kg</div>
+                          {groupedBagagePreparation["23"].map((it) => (
+                          <div
+                            key={it.id}
+                            className={`bagage-packing-item ${bagagePacking[it.id] ? "assigned" : ""}`}
+                          >
+                            <span>{it.t}</span>
+                            <div className="bagage-assignment-buttons">
+                              <button
+                                type="button"
+                                className={bagagePacking[it.id] === "23" ? "active" : ""}
+                                onClick={() => handleBagageAssignmentChange(it.id, "23", it.t)}
+                              >
+                                23 kg
+                              </button>
+                              <button
+                                type="button"
+                                className={bagagePacking[it.id] === "10" ? "active" : ""}
+                                onClick={() => handleBagageAssignmentChange(it.id, "10", it.t)}
+                              >
+                                10 kg
+                              </button>
+                            </div>
+                          </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      {bagageFilter === "all" && groupedBagagePreparation["10"].length > 0 ? (
+                        <div className="bagage-packing-group">
+                          <div className="bagage-packing-group-title">Bagage cabine — 10 kg</div>
+                          {groupedBagagePreparation["10"].map((it) => (
+                            <div key={it.id} className={`bagage-packing-item ${bagagePacking[it.id] ? "assigned" : ""}`}
+>
+                              <span>{it.t}</span>
+                              <div className="bagage-assignment-buttons">
+                                <button
+                                  type="button"
+                                  className={bagagePacking[it.id] === "23" ? "active" : ""}
+                                  onClick={() => handleBagageAssignmentChange(it.id, "23", it.t)}
+                                >
+                                  23 kg
+                                </button>
+                                <button
+                                  type="button"
+                                  className={bagagePacking[it.id] === "10" ? "active" : ""}
+                                  onClick={() => handleBagageAssignmentChange(it.id, "10", it.t)}
+                                >
+                                  10 kg
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      {bagageFilter === "all" && groupedBagagePreparation.unassigned.length > 0 ? (
+                        <div className="bagage-packing-group">
+                          <div className="bagage-packing-group-title">Non défini</div>
+                          {groupedBagagePreparation.unassigned.map((it) => (
+                            <div key={it.id} className={`bagage-packing-item ${bagagePacking[it.id] ? "assigned" : ""}`}
+>
+                              <span>{it.t}</span>
+                              <div className="bagage-assignment-buttons">
+                                <button
+                                  type="button"
+                                  className={bagagePacking[it.id] === "23" ? "active" : ""}
+                                  onClick={() => handleBagageAssignmentChange(it.id, "23", it.t)}
+                                >
+                                  23 kg
+                                </button>
+                                <button
+                                  type="button"
+                                  className={bagagePacking[it.id] === "10" ? "active" : ""}
+                                  onClick={() => handleBagageAssignmentChange(it.id, "10", it.t)}
+                                >
+                                  10 kg
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      {bagageFilter !== "all" ? (
+                        <div className="bagage-packing-group">
+                          <div className="bagage-packing-group-title">
+                            {bagageFilter === "23" ? "Valise soute — 23 kg" : bagageFilter === "10" ? "Bagage cabine — 10 kg" : "Non défini"}
+                          </div>
+                          {filteredBagagePreparation.length > 0 ? (
+                            filteredBagagePreparation.map((it) => (
+                              <div key={it.id} className={`bagage-packing-item ${bagagePacking[it.id] ? "assigned" : ""}`}
+>
+                                <span>{it.t}</span>
+                                <div className="bagage-assignment-buttons">
+                                  <button
+                                    type="button"
+                                    className={bagagePacking[it.id] === "23" ? "active" : ""}
+                                    onClick={() => handleBagageAssignmentChange(it.id, "23", it.t)}
+                                  >
+                                    23 kg
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className={bagagePacking[it.id] === "10" ? "active" : ""}
+                                    onClick={() => handleBagageAssignmentChange(it.id, "10", it.t)}
+                                  >
+                                    10 kg
+                                  </button>
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="bagage-packing-empty">Aucun élément dans cette vue.</div>
+                          )}
+                        </div>
+                      ) : null}
+                    </>
+                  )}
+                </div>
+              ) : null}
+            </>
           )}
         </div>
       </div>
